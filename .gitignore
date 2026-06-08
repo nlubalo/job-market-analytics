@@ -8,3 +8,20 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets
+.env
+*.env
+
+# dbt
+target/
+dbt_packages/
+logs/
+profiles.yml
+
+# Local raw data
+data/
+
+# IDE
+.vscode/
+.idea/
