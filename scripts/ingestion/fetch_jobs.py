@@ -40,7 +40,7 @@ def _parse_job(job: dict, page: int, country: str, ingested_at: datetime) -> dic
         "contract_time": job.get("contract_time"),
         "salary_min": job.get("salary_min"),
         "salary_max": job.get("salary_max"),
-        "salary_is_predicted": job.get("salary_is_predicted"),
+        "salary_is_predicted": bool(int(job["salary_is_predicted"])) if job.get("salary_is_predicted") is not None else None,
         "redirect_url": job.get("redirect_url"),
         "created_at": datetime.fromisoformat(job["created"].replace("Z", "+00:00")) if job.get("created") else None,
         "_ingested_at": ingested_at,
