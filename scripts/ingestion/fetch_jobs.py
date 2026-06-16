@@ -49,13 +49,18 @@ def _parse_job(job: dict, page: int, country: str, ingested_at: datetime) -> dic
     }
 
 
-def fetch_all_jobs(country: str = DEFAULT_COUNTRY) -> list[dict]:
+def fetch_all_jobs(country: str = DEFAULT_COUNTRY, max_days_old: int | None = 1) -> list[dict]:
     ingested_at = datetime.now(timezone.utc)
     all_jobs: list[dict] = []
 
     for page in range(1, MAX_PAGES + 1):
         logger.info("Fetching page %d/%d", page, MAX_PAGES)
-        response = get_jobs(country=country, page=page, results_per_page=RESULTS_PER_PAGE)
+        response = get_jobs(
+            country=country,
+            page=page,
+            results_per_page=RESULTS_PER_PAGE,
+            max_days_old=max_days_old,
+        )
         results = response.get("results", [])
         if not results:
             logger.info("No more results at page %d — stopping", page)
@@ -127,8 +132,8 @@ def write_to_databricks(records: list[dict]) -> None:
     logger.info("Wrote %d rows → %s (Delta)", df.count(), table)
 
 
-def main(local: bool = False) -> None:
-    records = fetch_all_jobs()
+def main(local: bool = False, max_days_old: int | None = 1) -> None:
+    records = fetch_all_jobs(max_days_old=max_days_old)
     if not records:
         logger.info("No records fetched — nothing to write")
         return
@@ -142,5 +147,6 @@ def main(local: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--local", action="store_true", help="Write parquet locally (no Spark needed)")
+    parser.add_argument("--max-days-old", type=int, default=1, help="Only fetch jobs posted in the last N days (default: 1)")
     args = parser.parse_args()
-    main(local=args.local)
+    main(local=args.local, max_days_old=args.max_days_old)

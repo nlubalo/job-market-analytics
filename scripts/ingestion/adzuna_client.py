@@ -39,6 +39,7 @@ def get_jobs(
     sort_by: str = "date",
     full_time: bool | None = None,
     permanent: bool | None = None,
+    max_days_old: int | None = None,
 ) -> dict[str, Any]:
     """Fetch a page of job postings."""
     params: dict[str, Any] = {
@@ -57,6 +58,8 @@ def get_jobs(
         params["full_time"] = 1 if full_time else 0
     if permanent is not None:
         params["permanent"] = 1 if permanent else 0
+    if max_days_old is not None:
+        params["max_days_old"] = max_days_old
 
     url = f"{ADZUNA_BASE_URL}/jobs/{country}/search/{page}"
     return _get(url, params)
