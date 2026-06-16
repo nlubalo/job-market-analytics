@@ -37,4 +37,4 @@ DBT_CATALOG = os.getenv("DBT_CATALOG", "job_market")
 ADZUNA_BASE_URL = "https://api.adzuna.com/v1/api"
 DEFAULT_COUNTRY = "gb"
 RESULTS_PER_PAGE = 50
-MAX_PAGES = 1  # 1000 jobs per run; raise for full pulls
+MAX_PAGES = 1000  # 1000 jobs per run; raise for full pulls
