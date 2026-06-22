@@ -1,9 +1,9 @@
 """
-Aduna job postings ingestion module
+Adzuna job postings ingestion module
 
-Pulls job posting from Aduna API and lands them, untouched into
-a partitioned raw zob (Delta Lake/ Object storage). No parsing or 
-transfomation happend here
+Pulls job postings from the Adzuna API and lands them, untouched, into
+a partitioned raw zone (Delta Lake / object storage). No parsing or
+transformation happens here.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -210,12 +210,12 @@ def fetch_endpoint_data(
             run_result.pages_failed = 1
             run_result.status = "failed"
             run_result.error_messages.append(str(e))
-            run_result.finished_at = datetime.utcnow()
+            run_result.finished_at = datetime.now(UTC)
             return ([] if endpoint.results_key else {}), run_result
         
         run_result.pages_fetched = 1
         run_result.status = "success"
-        run_result.finished_at = datetime.utcnow()
+        run_result.finished_at = datetime.now(UTC)
         
         if endpoint.results_key is None:
             # Single-object response (e.g. salary_histogram) — no list to dedup
@@ -285,7 +285,7 @@ def fetch_endpoint_data(
         page += 1
         time.sleep(0.25)  # gentle pacing — stay well under rate limits
  
-    run_result.finished_at = datetime.utcnow()
+    run_result.finished_at = datetime.now(UTC)
     if run_result.pages_failed == 0:
         run_result.status = "success"
     elif run_result.records_fetched > 0:
@@ -436,8 +436,8 @@ if __name__ == "__main__":
  
     app_id = os.environ["ADZUNA_APP_ID"]
     app_key = os.environ["ADZUNA_APP_KEY"]
-    raw_zone_root = "/data/raw/adzuna"
-    country = "gb"
+    raw_zone_root = os.environ.get("ADZUNA_RAW_ZONE_ROOT", "/data/raw/adzuna")
+    country = os.environ.get("ADZUNA_COUNTRY", "gb")
  
     # Orchestrator (Airflow/Dagster) calls these as two separate tasks
     # on two separate schedules — not one undifferentiated "run everything"
