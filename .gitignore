@@ -25,3 +25,20 @@ data/
 # IDE
 .vscode/
 .idea/
+
+# Not yet pushed — added 2026-06-22
+.github/
+macros/
+models/intermediate/
+models/staging/.envrc
+models/staging/_sources.yml
+models/staging/_staging.yml
+models/staging/stg_categories.sql
+models/staging/stg_geodata.sql
+models/staging/stg_salary_history.sql
+profiles.yml.example
+scripts/ingestion/fetch_categories.py
+scripts/ingestion/fetch_geodata.py
+scripts/ingestion/fetch_salaries.py
+#scripts/ingestion/ingest_jobs.py
+temp.txt
