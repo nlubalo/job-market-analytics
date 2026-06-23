@@ -33,13 +33,13 @@ country       = os.environ.get("ADZUNA_COUNTRY", "gb")
 # COMMAND ----------
 
 # Daily — job postings (run every day)
-results = run_daily_ingestion(country, app_id, app_key, raw_zone_root)
-for r in results:
-    print(r.to_dict())
+#results = run_daily_ingestion(country, app_id, app_key, raw_zone_root)
+#for r in results:
+#    print(r.to_dict())
 
 # COMMAND ----------
 
 # Weekly — categories + geodata (run once a week)
-# results = run_weekly_reference_ingestion(country, app_id, app_key, raw_zone_root)
-# for r in results:
-#     print(r.to_dict())
+results = run_weekly_reference_ingestion(country, app_id, app_key, raw_zone_root)
+for r in results:
+     print(r.to_dict())
