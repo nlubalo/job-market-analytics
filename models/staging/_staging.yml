@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: stg_jobs
+    description: Deduplicated, type-cast job postings from Adzuna.
+    columns:
+      - name: job_id
+        tests: [not_null, unique]
+      - name: job_title
+        tests: [not_null]
+      - name: posted_date
+        tests: [not_null]
+      - name: country_code
+        tests: [not_null]
+      - name: salary_midpoint
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+                #mostly: 0.99
+
+  - name: stg_categories
+    columns:
+      - name: category_tag
+        tests: [not_null, unique]
+
+  - name: stg_salary_history
+    columns:
+      - name: role
+        tests: [not_null]
+      - name: month
+        tests: [not_null]
+      - name: avg_salary
+        tests: [not_null]
+
+  - name: stg_geodata
+    columns:
+      - name: location_name
+        tests: [not_null, unique]

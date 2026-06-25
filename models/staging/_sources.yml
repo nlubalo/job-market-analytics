@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Raw Delta tables ingested from the Adzuna Jobs API.
+    database: "{{ env_var('DBT_CATALOG', 'job_market') }}"
+    schema: raw
+    tables:
+      - name: salary_histogram
+        description: Salary band distribution per role, per ingestion run.
+
+      - name: salary_history
+        description: Monthly average salary trend per role.

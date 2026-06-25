@@ -31,11 +31,11 @@ data/
 macros/
 models/intermediate/
 models/staging/.envrc
-models/staging/_sources.yml
-models/staging/_staging.yml
-models/staging/stg_categories.sql
-models/staging/stg_geodata.sql
-models/staging/stg_salary_history.sql
+#models/staging/_sources.yml
+#models/staging/_staging.yml
+#models/staging/stg_categories.sql
+#models/staging/stg_geodata.sql
+#models/staging/stg_salary_history.sql
 profiles.yml.example
 scripts/ingestion/fetch_categories.py
 scripts/ingestion/fetch_geodata.py
