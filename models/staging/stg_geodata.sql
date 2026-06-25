@@ -16,8 +16,7 @@ with source as (
 parsed as (
     select
         location.display_name                               as location_name,
-        cast(longitude as double)                            as lng,
-        cast(latitude as double)                             as lat,
+        location.area                                       as location_area,
         cast(count as bigint)                                as job_count,
         regexp_extract(_file_path, 'country=([^/]+)', 1)    as _country,
         regexp_extract(_file_path, 'ingestion_date=([^/]+)', 1) as _ingestion_date,
@@ -36,11 +35,10 @@ deduped as (
 )
 
 select
-    trim(location_name)     as location_name,
-    lng,
-    lat,
+    trim(location_name)                 as location_name,
+    array_join(location_area, ',')      as location_area,
     job_count,
-    _country                as country_code,
+    _country                            as country_code,
     _ingested_at
 from deduped
 where job_count > 0

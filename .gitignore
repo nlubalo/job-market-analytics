@@ -29,7 +29,7 @@ data/
 # Not yet pushed — added 2026-06-22
 .github/
 macros/
-models/intermediate/
+#models/intermediate/
 models/staging/.envrc
 #models/staging/_sources.yml
 #models/staging/_staging.yml
