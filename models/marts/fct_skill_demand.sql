@@ -13,7 +13,7 @@ with base as (
         seniority_band,
         country_code,
         skill_python, skill_sql, skill_java, skill_go,
-        skill_rust, skill_javascript, skill_typescript, skill_cpp, skill_r,
+        skill_rust, skill_javascript, skill_typescript, skill_cpp, skill_r, skill_scala,
 
         skill_spark, skill_databricks, skill_snowflake, skill_bigquery, skill_redshift,
         skill_postgresql, skill_mongodb, skill_redis, skill_elasticsearch,
@@ -38,7 +38,7 @@ with base as (
     where posted_date >= (select max(posted_date) from {{ this }})
     {% endif %}
 ),
-unpivot as (
+unpivoted as (
     select
         posted_date,
         category_tag,
@@ -47,7 +47,7 @@ unpivot as (
         skill_name,
         skill_present
     from base
-    unpivot (skill_present from skill_name in (
+    unpivot (skill_present for skill_name in (
         skill_python, skill_sql, skill_java, skill_scala, skill_go,
         skill_rust, skill_javascript, skill_typescript, skill_cpp, skill_r,
         skill_spark, skill_databricks, skill_snowflake, skill_bigquery, skill_redshift,
@@ -74,13 +74,13 @@ aggregated as (
         sum(skill_present) as job_count,
         count(*) as total_jobs
     from unpivoted
-    group by posted_date, skull_name, category_tag, seniority_band, country_code
+    group by posted_date, skill_name, category_tag, seniority_band, country_code
 )
 select
     {{ dbt_utils.generate_surrogate_key(['posted_date', 'skill_name', 'category_tag', 'seniority_band', 'country_code']) }} as demand_key,
     posted_date,
     skill_name,
-    category_name,
+    category_tag,
     seniority_band,
     country_code,
     job_count,
