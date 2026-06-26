@@ -36,6 +36,37 @@ models:
                 min_value: 0
                 max_value: 1000000
 
+  - name: fct_job_postings
+    columns:
+      - name: job_id
+        tests: [not_null, unique]
+      - name: company_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_company')
+              field: company_key
+      - name: location_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_location')
+              field: location_key
+      - name: category_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_category')
+              field: category_key
+      - name: salary_midpoint
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+      - name: posted_date
+        tests: [not_null]
+
   - name: dim_location
     columns:
       - name: location_key
