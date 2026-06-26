@@ -69,7 +69,9 @@ Four layers, materialized differently:
 | `staging/` | Incremental (merge on `job_id`) | Type-cast, deduplicate, extract fields from raw JSON files via `read_files()` |
 | `intermediate/` | Incremental (merge on `job_id`) | Business logic: skill flags, seniority, work arrangement, salary buckets, location enrichment |
 | `core/` | (empty currently) | Reserved for fact tables |
-| `marts/` | Table | Dimensional models (`dim_*`) aggregated for consumers |
+| `marts/` | Table | Dimensional models (`dim_*`) aggregated for consumers — `dim_company`, `dim_location`, `dim_category` |
+
+Tests for all mart models are defined in `models/marts/_marts.yml`: surrogate key uniqueness/not-null, business key not-null, referential integrity (`dim_category` → `stg_categories`), and salary/job-count range checks via `dbt_expectations`.
 
 **Staging reads raw files directly** using Databricks `read_files()` with `_metadata.file_path` to extract partition values (country, ingestion_date). Incremental predicate is on `_file_modification_time` / `_ingested_at`.
 
