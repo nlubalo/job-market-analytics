@@ -67,6 +67,74 @@ models:
       - name: posted_date
         tests: [not_null]
 
+  - name: fct_skill_demand
+    columns:
+      - name: demand_key
+        tests: [not_null, unique]
+      - name: posted_date
+        tests: [not_null]
+      - name: skill_name
+        tests: [not_null]
+      - name: category_tag
+        tests: [not_null]
+      - name: seniority_band
+        tests: [not_null]
+      - name: country_code
+        tests: [not_null]
+      - name: job_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+      - name: pct_jobs_mentioning
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 100
+
+  - name: fct_salary_trends
+    columns:
+      - name: trend_key
+        tests: [not_null, unique]
+      - name: salary_month
+        tests: [not_null]
+      - name: category_tag
+        tests: [not_null]
+      - name: seniority_band
+        tests: [not_null]
+      - name: country_code
+        tests: [not_null]
+      - name: jobs_with_actual_salary
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+      - name: avg_salary
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+      - name: median_salary
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+      - name: p25_salary
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+      - name: p75_salary
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+
   - name: dim_location
     columns:
       - name: location_key
