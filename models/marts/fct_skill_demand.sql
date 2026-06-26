@@ -1,7 +1,7 @@
 {{
     config(
         materialized = 'incremental',
-        unique_key   = 'demand_key',
+        unique_key = 'demand_key',
         incremental_strategy = 'merge',
     )
 }}
@@ -12,8 +12,7 @@ with base as (
         category_tag,
         seniority_band,
         country_code,
-
-        skill_python, skill_sql, skill_java, skill_scala, skill_go,
+        skill_python, skill_sql, skill_java, skill_go,
         skill_rust, skill_javascript, skill_typescript, skill_cpp, skill_r,
 
         skill_spark, skill_databricks, skill_snowflake, skill_bigquery, skill_redshift,
@@ -34,14 +33,12 @@ with base as (
         skill_powerbi, skill_tableau, skill_looker, skill_metabase, skill_superset, skill_excel,
 
         skill_git, skill_cicd, skill_jenkins, skill_github_actions, skill_agile
-
-    from {{ ref('int_jobs_enriched') }}
+    from {{ ref('int_jobs_enriched')}}
     {% if is_incremental() %}
-    where posted_date > (select max(posted_date) from {{ this }})
+    where posted_date >= (select max(posted_date) from {{ this }})
     {% endif %}
 ),
-
-unpivoted as (
+unpivot as (
     select
         posted_date,
         category_tag,
@@ -50,7 +47,7 @@ unpivoted as (
         skill_name,
         skill_present
     from base
-    unpivot (skill_present for skill_name in (
+    unpivot (skill_present from skill_name in (
         skill_python, skill_sql, skill_java, skill_scala, skill_go,
         skill_rust, skill_javascript, skill_typescript, skill_cpp, skill_r,
         skill_spark, skill_databricks, skill_snowflake, skill_bigquery, skill_redshift,
@@ -67,7 +64,6 @@ unpivoted as (
         skill_git, skill_cicd, skill_jenkins, skill_github_actions, skill_agile
     ))
 ),
-
 aggregated as (
     select
         posted_date,
@@ -75,20 +71,20 @@ aggregated as (
         category_tag,
         seniority_band,
         country_code,
-        sum(skill_present)  as job_count,
-        count(*)            as total_jobs
+        sum(skill_present) as job_count,
+        count(*) as total_jobs
     from unpivoted
-    group by posted_date, skill_name, category_tag, seniority_band, country_code
+    group by posted_date, skull_name, category_tag, seniority_band, country_code
 )
-
 select
     {{ dbt_utils.generate_surrogate_key(['posted_date', 'skill_name', 'category_tag', 'seniority_band', 'country_code']) }} as demand_key,
     posted_date,
     skill_name,
-    category_tag,
+    category_name,
     seniority_band,
     country_code,
     job_count,
     total_jobs,
-    round(job_count / total_jobs * 100, 2) as pct_jobs_mentioning
+    round(job_count * 100.0 / total_jobs, 2) as pct_jobs_mentioning
+
 from aggregated
