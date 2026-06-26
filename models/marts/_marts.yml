@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: dim_category
+    columns:
+      - name: category_key
+        tests: [not_null, unique]
+      - name: category_tag
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_categories')
+              field: category_tag
+      - name: category_label
+        tests: [not_null]
+      - name: country_code
+        tests: [not_null]
+
+  - name: dim_company
+    columns:
+      - name: company_key
+        tests: [not_null, unique]
+      - name: company_name
+        tests: [not_null]
+      - name: country_code
+        tests: [not_null]
+      - name: total_jobs
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+      - name: avg_salary_midpoint
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+
+  - name: dim_location
+    columns:
+      - name: location_key
+        tests: [not_null, unique]
+      - name: location_name
+        tests: [not_null]
+      - name: country_code
+        tests: [not_null]
+      - name: total_jobs
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+      - name: avg_salary_midpoint
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
