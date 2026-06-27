@@ -6,7 +6,7 @@
     )
 }}
 
-{% set raw_path = env_var('ADZUNA_RAW_ZONE_ROOT', '/Volumes/job_market/raw/adzuna') ~ '/endpoint=job_search/' %}
+{% set raw_path = env_var('JSEARCH_RAW_ZONE_ROOT', '/Volumes/job_market/raw/jsearch') ~ '/endpoint=job_search/' %}
 
 with source as (
     select
@@ -26,26 +26,22 @@ with source as (
 
 parsed as (
     select
-        cast(id as string)                                  as job_id,
-        title,
-        description,
-        company.display_name                                as company_display_name,
-        location.display_name                               as location_display_name,
-        array_join(location.area, ',')                      as location_area,
-        category.label                                      as category_label,
-        category.tag                                        as category_tag,
-        contract_type,
-        contract_time,
-        cast(salary_min as double)                          as salary_min,
-        cast(salary_max as double)                          as salary_max,
-        cast(salary_is_predicted as int) = 1                as salary_is_predicted,
-        redirect_url,
-        to_timestamp(replace(created, 'Z', '+00:00'))       as created_at,
-        regexp_extract(_file_path, 'country=([^/]+)', 1)    as _country,
-        regexp_extract(_file_path, 'ingestion_date=([^/]+)', 1) as _ingestion_date,
+        cast(job_id as string)                              as job_id,
+        job_title,
+        job_description,
+        employer_name,
+        employer_website,
+        job_employment_type,
+        job_is_remote,
+        to_timestamp(job_posted_at_datetime_utc)            as posted_timestamp,
+        job_city,
+        job_state,
+        job_country,
+        cast(job_min_salary as double)                      as salary_min,
+        cast(job_max_salary as double)                      as salary_max,
         _file_modified_at                                   as _ingested_at
     from source
-    where id is not null
+    where job_id is not null
 ),
 
 deduped as (
@@ -58,25 +54,23 @@ deduped as (
 
 select
     job_id,
-    lower(trim(title))                          as title,
-    description,
-    lower(trim(company_display_name))           as company_name,
-    lower(trim(location_display_name))          as location_name,
-    location_area,
-    lower(trim(category_label))                 as category_label,
-    lower(trim(category_tag))                   as category_tag,
-
-    lower(coalesce(contract_type, 'unknown'))    as contract_type,
-    lower(coalesce(contract_time, 'unknown'))    as contract_time,
+    lower(trim(job_title))                                  as title,
+    job_description                                         as description,
+    lower(trim(employer_name))                              as company_name,
+    employer_website                                        as company_website,
+    lower(trim(
+        coalesce(nullif(job_city, ''), job_state, job_country)
+    ))                                                      as location_name,
+    lower(trim(job_country))                                as country_code,
+    lower(coalesce(job_employment_type, 'unknown'))         as contract_type,
+    job_is_remote,
     salary_min,
     salary_max,
     case
         when salary_min is not null and salary_max is not null
         then (salary_min + salary_max) / 2.0
-    end                                          as salary_midpoint,
-    salary_is_predicted,
-    cast(created_at as date)                     as posted_date,
-    created_at                                   as posted_timestamp,
-    _ingested_at,
-    _country                                     as country_code
+    end                                                     as salary_midpoint,
+    cast(posted_timestamp as date)                          as posted_date,
+    posted_timestamp,
+    _ingested_at
 from deduped
