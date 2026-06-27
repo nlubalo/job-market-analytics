@@ -9,7 +9,7 @@ with source as (
         '{{ raw_path }}',
         format => 'json',
         recursiveFileLookup => true,
-        pathGlobFilter => 'data.jsonl'
+        pathGlobFilter => 'data.json'
     )
     {% if is_incremental() %}
     where _metadata.file_modification_time > (select max(_ingested_at) from {{ this }})
@@ -35,6 +35,7 @@ parsed as (
         salaries_updated_at,
         publisher_name,
         confidence,
+        cast(regexp_extract(_file_path, 'ingestion_date=([^/]+)', 1) as date) as ingestion_date,
         _file_modified_at                               as _ingested_at
     from source
 ),
@@ -66,6 +67,7 @@ select
     salaries_updated_at,
     publisher_name,
     confidence,
+    ingestion_date,
     _ingested_at
 from deduped
 where median_salary is not null
