@@ -336,7 +336,7 @@ def write_raw_zone(
         {root}/endpoint={name}/ingestion_date={date}/query={query}/data.jsonl
         {root}/endpoint={name}/ingestion_date={date}/query={query}/_run_metadata.json
 
-    The raw zone is append-only — never overwritten in place.
+    Re-running the same endpoint + query + date overwrites the existing partition.
     """
     safe_query = run.query.replace(" ", "_").replace("/", "-")[:80]
     partition_dir = "/".join([
@@ -351,7 +351,7 @@ def write_raw_zone(
     else:
         data_content = json.dumps(payload)
 
-    data_path = f"{partition_dir}/data.jsonl"
+    data_path = f"{partition_dir}/data.json"
     _write_text(data_path, data_content)
     _write_text(f"{partition_dir}/_run_metadata.json", json.dumps(run.to_dict(), indent=2))
 
