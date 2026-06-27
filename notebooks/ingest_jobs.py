@@ -19,9 +19,15 @@ from scripts.ingestion.ingest_jobs import (
 )
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE SCHEMA IF NOT EXISTS job_market.raw;
+# MAGIC CREATE VOLUME IF NOT EXISTS job_market.raw.jsearch;
 
 # COMMAND ----------
 

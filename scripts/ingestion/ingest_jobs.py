@@ -263,6 +263,9 @@ def fetch_endpoint_data(
 
         outer = data.get(endpoint.results_key or "", [])
         page_results: list[dict] = outer.get(endpoint.results_subkey, []) if endpoint.results_subkey else outer
+        logger.debug("DEBUG outer type=%s, page_results type=%s, first=%r",
+                     type(outer).__name__, type(page_results).__name__,
+                     page_results[0] if page_results else None)
         page_num += 1
         run.pages_fetched += 1
 
@@ -307,11 +310,26 @@ def fetch_endpoint_data(
     return all_records, run
 
 
+def _write_text(path: str, content: str) -> None:
+    """Write text to a path, using dbutils.fs on Databricks Volumes."""
+    if path.startswith("/Volumes/"):
+        try:
+            from pyspark.dbutils import DBUtils  # type: ignore[import]
+            from pyspark.sql import SparkSession
+            dbutils = DBUtils(SparkSession.builder.getOrCreate())
+            dbutils.fs.put(path, content, overwrite=True)
+            return
+        except Exception:
+            pass
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(content)
+
+
 def write_raw_zone(
     payload: list[dict[str, Any]] | dict[str, Any],
     run: IngestionResult,
     raw_zone_root: str
-    ) -> Path:
+    ) -> str:
     """
     Write the raw, untouched response to a partitioned landing zone:
 
@@ -320,36 +338,28 @@ def write_raw_zone(
 
     The raw zone is append-only — never overwritten in place.
     """
-    # Sanitise query for use as a directory name
     safe_query = run.query.replace(" ", "_").replace("/", "-")[:80]
-    
-    partition_dir = (
-        Path(raw_zone_root)
-        / f"endpoint={run.endpoint}"
-        / f"ingestion_date={run.ingestion_date.isoformat()}"
-        / f"query={safe_query}"
-    )
-    partition_dir.mkdir(parents=True, exist_ok=True)
+    partition_dir = "/".join([
+        raw_zone_root.rstrip("/"),
+        f"endpoint={run.endpoint}",
+        f"ingestion_date={run.ingestion_date.isoformat()}",
+        f"query={safe_query}",
+    ])
 
-    # Newline-delimited JSON for lists (Spark reads these natively)
-    # Single JSON object for non-list responses (salary estimates etc.)
-    data_path = partition_dir / "data.jsonl"
-    with data_path.open("w") as f:
-        if isinstance(payload, list):
-            for record in payload:
-                f.write(json.dumps(record) + "\n")
-        else:
-            json.dump(payload, f)
+    if isinstance(payload, list):
+        data_content = "\n".join(json.dumps(r) for r in payload)
+    else:
+        data_content = json.dumps(payload)
 
-    metadata_path = partition_dir / "_run_metadata.json"
-    with metadata_path.open("w") as f:
-        json.dump(run.to_dict(), f, indent=2)
+    data_path = f"{partition_dir}/data.jsonl"
+    _write_text(data_path, data_content)
+    _write_text(f"{partition_dir}/_run_metadata.json", json.dumps(run.to_dict(), indent=2))
 
     logger.info(
         "Wrote endpoint=%s query=%s → %s (status=%s, records=%d)",
         run.endpoint, run.query, data_path, run.status, run.records_fetched,
     )
-    return data_path
+    return data_path  # str path, works for both local and /Volumes/
 
 # Orchestration entry points
 
