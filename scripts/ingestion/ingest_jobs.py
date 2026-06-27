@@ -56,6 +56,7 @@ class EndpointConfig:
     path: str
     paginated: bool = True
     results_key: str | None = "data"
+    results_subkey: str | None = None
     extra_params: dict[str, Any] = field(default_factory=dict)
     record_id_fn: Callable[[dict[str, Any]], str | None] | None = None
 
@@ -65,6 +66,7 @@ ENDPOINTS: dict[str, EndpointConfig] = {
         path="search-v2",
         paginated=True,
         results_key="data",
+        results_subkey="jobs",
         extra_params={
             "date_posted": "today",
             "results_per_page": RESULTS_PER_PAGE,
@@ -259,7 +261,8 @@ def fetch_endpoint_data(
             # Advance cursor is unknown — we can't safely continue pagination
             break
 
-        page_results: list[dict] = data.get(endpoint.results_key or "", [])
+        outer = data.get(endpoint.results_key or "", [])
+        page_results: list[dict] = outer.get(endpoint.results_subkey, []) if endpoint.results_subkey else outer
         page_num += 1
         run.pages_fetched += 1
 
@@ -284,9 +287,9 @@ def fetch_endpoint_data(
             "Page %d: %d results, %d new (total so far: %d)",
             page_num, len(page_results), new_count, run.records_fetched,
         )
-        # JSearch cursor lives at data["parameters"]["cursor"]
+        # JSearch cursor lives at data["data"]["cursor"]
         # Absence of cursor = no more pages
-        cursor = data.get("parameters", {}).get("cursor")
+        cursor = data.get("data", {}).get("cursor")
         if not cursor:
             logger.info("No next cursor — pagination complete.")
             break
