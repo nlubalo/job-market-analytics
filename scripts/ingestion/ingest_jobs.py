@@ -203,7 +203,11 @@ def fetch_endpoint_data(
             f"Registered: {list(ENDPOINTS)}"
         )
     call_params = call_params or {}
-    query_label = call_params.get("query", endpoint_name)
+    query_label = (
+        call_params.get("query")
+        or f"{call_params.get('job_title', '')}_{call_params.get('location', '')}".strip("_")
+        or endpoint_name
+    )
 
     run = IngestionResult(
         endpoint=endpoint_name,
@@ -457,12 +461,16 @@ def run_weekly_reference_ingestion(
     """
     results = []
     for params in WEEKLY_SALARY_BENCHMARKS:
-        result = ingest_endpoint(
-            endpoint_name="salary_estimate",
-            api_key=api_key,
-            raw_zone_root=raw_zone_root,
-            call_params=params,
-        )
+        try:
+            result = ingest_endpoint(
+                endpoint_name="salary_estimate",
+                api_key=api_key,
+                raw_zone_root=raw_zone_root,
+                call_params=params,
+            )
+        except JsearchAPIError as e:
+            logger.warning("Salary estimate failed for %s — skipping: %s", params, e)
+            continue
         results.append(result)
     return results
 
