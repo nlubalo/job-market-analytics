@@ -2,11 +2,11 @@ version: 2
 
 models:
   - name: stg_jobs
-    description: Deduplicated, type-cast job postings from Adzuna.
+    description: Deduplicated, type-cast job postings from JSearch.
     columns:
       - name: job_id
         tests: [not_null, unique]
-      - name: job_title
+      - name: title
         tests: [not_null]
       - name: posted_date
         tests: [not_null]
@@ -18,23 +18,18 @@ models:
               arguments:
                 min_value: 0
                 max_value: 1000000
-                #mostly: 0.99
-
-  - name: stg_categories
-    columns:
-      - name: category_tag
-        tests: [not_null, unique]
 
   - name: stg_salary_history
+    description: Salary benchmark estimates from JSearch by role and location.
     columns:
-      - name: role
+      - name: job_title
         tests: [not_null]
-      - name: month
+      - name: location
         tests: [not_null]
-      - name: avg_salary
-        tests: [not_null]
-
-  - name: stg_geodata
-    columns:
-      - name: location_name
-        tests: [not_null, unique]
+      - name: median_salary
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000

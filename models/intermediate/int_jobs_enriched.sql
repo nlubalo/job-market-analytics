@@ -8,13 +8,11 @@
 
 -- Adds skill flags, salary bucket, seniority, and remote detection to staging jobs.
 -- This is where domain logic lives before the star schema.
-{%- set tech_categories = var('tech_categories', ['it-jobs', 'engineering-jobs']) %}
 
 with jobs as (
     select * from {{ ref('stg_jobs') }}
-    where category_tag in ({{ tech_categories | map("tojson") | join(", ") }})
     {% if is_incremental() %}
-    and _ingested_at > (select max(_ingested_at) from {{ this }})
+    where _ingested_at > (select max(_ingested_at) from {{ this }})
     {% endif %}
 )
 
@@ -23,11 +21,9 @@ select
     title,
     company_name,
     location_name,
-    location_area,
-    category_tag,
-    category_label,
+    country_code,
     contract_type,
-    contract_time,
+    job_is_remote,
 
     -- seniority derived from title keywords
     case
@@ -38,11 +34,9 @@ select
         else 'mid'
     end as seniority_band,
 
-    -- remote detection from title + description
+    -- remote detection: use JSearch boolean first, fall back to text scan
     case
-        when lower(title || ' ' || coalesce(description, '')) like any (
-            '%remote%', '%work from home%', '%wfh%', '%fully remote%'
-        ) then 'remote'
+        when job_is_remote = true then 'remote'
         when lower(title || ' ' || coalesce(description, '')) like any (
             '%hybrid%', '%flexible working%'
         ) then 'hybrid'
@@ -128,11 +122,9 @@ select
     salary_max,
     salary_midpoint,
     {{ salary_bucket('salary_midpoint') }}          as salary_bucket,
-    salary_is_predicted,
 
     posted_date,
     posted_timestamp,
-    country_code,
     _ingested_at
 
 from jobs
