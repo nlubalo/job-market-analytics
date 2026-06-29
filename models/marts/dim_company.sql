@@ -1,5 +1,5 @@
 
-with jobs_stats as (
+with job_stats as (
     select
         company_name,
         country_code,
