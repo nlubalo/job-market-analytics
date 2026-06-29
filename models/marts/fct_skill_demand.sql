@@ -88,3 +88,4 @@ select
     total_jobs,
     round(job_count / total_jobs * 100, 2) as pct_jobs_mentioning
 from aggregated
+where job_count > 0
