@@ -61,7 +61,7 @@ select
     lower(trim(
         coalesce(nullif(job_city, ''), job_state, job_country)
     ))                                                      as location_name,
-    lower(trim(job_country))                                as country_code,
+    lower(trim(coalesce(nullif(job_country, ''), 'remote'))) as country_code,
     lower(coalesce(job_employment_type, 'unknown'))         as contract_type,
     job_is_remote,
     salary_min,
