@@ -16,6 +16,8 @@ dependencies = [
     "pandas>=2.3.3",
     "pyarrow>=24.0.0",
     "tenacity>=9.1.4",
+    "streamlit>=1.59.2",
+    "plotly>=6.9.0",
 ]
 
 [tool.pyright]

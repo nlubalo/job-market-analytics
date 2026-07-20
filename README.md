@@ -1,149 +1,181 @@
-# Job Market Analytics
+# Job Market Analytics Platform — Technical Documentation
 
-Job market analytics pipeline focused on Kenya / East Africa with global salary benchmarks, built on JSearch API data, Databricks Delta Lake, and dbt.
+## Overview
 
-## Pipeline Overview
+A dbt data pipeline built on Databricks/SQL that ingests job posting
+and salary data from the JSearch API to power a benchmarking platform
+comparing the data and tech job market across Kenya, the UK, and the US.
 
-```
-JSearch API (OpenWebNinja)
-    │
-    ▼
-Raw Zone (Unity Catalog Volumes)
-  endpoint=job_search/ingestion_date=YYYY-MM-DD/query={role+location}/data.jsonl
-  endpoint=salary_estimate/ingestion_date=YYYY-MM-DD/query={role_location}/data.jsonl
-    │
-    ▼
-dbt – Staging        (incremental)   stg_jobs, stg_salary_history
-dbt – Intermediate   (incremental)   int_jobs_enriched
-dbt – Marts          (tables)        dim_company, fct_job_postings, fct_skill_demand, fct_salary_trends
-```
+The pipeline follows a medallion architecture:
+raw → staging → intermediate → dimensions + facts → marts
 
-## Data Model
+---
 
-```mermaid
-erDiagram
+## Data Sources
 
-    dim_company {
-        string company_key PK
-        string company_name
-        string country_code
-        int    total_jobs
-        int    actual_salary_count
-        string primary_seniority
-        string primary_work_arrangement
-        string primary_location
-        float  avg_salary_midpoint
-        float  pct_python
-        float  pct_sql
-        float  pct_aws
-        float  pct_spark
-        float  pct_databricks
-        float  pct_dbt
-        float  pct_machine_learning
-        date   first_seen
-        date   last_seen
-    }
+### JSearch API (via RapidAPI)
 
-    fct_job_postings {
-        string job_id PK
-        string company_key FK
-        string location_name
-        string country_code
-        string seniority_band
-        string work_arrangement
-        string contract_type
-        bool   job_is_remote
-        string salary_bucket
-        float  salary_min
-        float  salary_max
-        float  salary_midpoint
-        int    skill_python
-        int    skill_sql
-        int    skill_spark
-        int    skill_aws
-        int    skill_dbt
-        date   posted_date
-    }
+Two endpoints are consumed:
 
-    fct_skill_demand {
-        string demand_key PK
-        date   posted_date
-        string skill_name
-        string seniority_band
-        string country_code
-        int    job_count
-        int    total_jobs
-        float  pct_jobs_mentioning
-    }
+**Job Search endpoint** — returns individual job postings with title,
+company, location, employment type, description, and occasionally
+an embedded salary range. Ingested into `jsearch.job_search_raw`.
 
-    fct_salary_trends {
-        string trend_key PK
-        date   salary_month
-        string seniority_band
-        string country_code
-        int    job_count
-        int    jobs_with_actual_salary
-        float  avg_salary
-        float  median_salary
-        float  p25_salary
-        float  p75_salary
-        float  min_salary
-        float  max_salary
-    }
+**Estimated Salary endpoint** — returns aggregated salary statistics
+(min, median, max) for a given job title and location combination.
+Includes base salary, total compensation, and additional pay splits.
+Ingested into `jsearch.salary_raw`.
 
-    fct_job_postings }o--|| dim_company : "company_key"
-```
 
-## Mart Tables
+---
 
-### Dimension Tables
+## Repository Structure
 
-| Table | Grain | Description |
+job_market_analytics/
+├── models/
+│   ├── staging/
+│   │   ├── stg_jsearch_job_search.sql
+│   │   └── stg_jsearch_salary.sql
+│   ├── intermediate/
+│   │   ├── int_jobs_enriched.sql
+│   │   ├── int_job_titles_normalized.sql
+│   │   ├── int_salary_estimates.sql
+│   │   └── int_company_duplicates.sql
+│   ├── dimensions/
+│   │   ├── dim_date.sql
+│   │   ├── dim_job_title.sql
+│   │   ├── dim_location.sql
+│   │   └── dim_company.sql
+│   ├── facts/
+│   │   ├── fct_job_postings.sql
+│   │   ├── fct_job_posting_skills.sql
+│   │   └── fct_salary_estimates.sql
+│   └── marts/
+│       ├── mart_job_market_benchmarks.sql
+│       ├── mart_salary_trends.sql
+│       └── mart_skill_demand.sql
+├── macros/
+│   ├── normalize_job_title.sql
+│   └── derive_seniority.sql
+
+
+
+---
+
+## Model Inventory
+
+### Total: 16 files
+
+| Layer | Model | Materialization | Grain |
+|---|---|---|---|
+| Staging | stg_jsearch_job_search | view | one row per raw API record |
+| Staging | stg_jsearch_salary | view | one row per raw API record |
+| Intermediate | int_jobs_enriched | incremental (merge) | one row per unique job posting |
+| Intermediate | int_job_titles_normalized | view | one row per distinct normalized title |
+| Intermediate | int_salary_estimates | incremental (merge) | one row per (title, location, currency, date) |
+| Intermediate | int_company_duplicates | table | one row per probable duplicate company pair |
+| Dimension | dim_date | table | one row per calendar day |
+| Dimension | dim_job_title | table | one row per normalized job title |
+| Dimension | dim_location | table | one row per (city, country) combination |
+| Dimension | dim_company | table | one row per normalized company name |
+| Fact | fct_job_postings | incremental (merge) | one row per unique job posting |
+| Fact | fct_job_posting_skills | table | one row per (job posting, skill) pair |
+| Fact | fct_salary_estimates | incremental (merge) | one row per (title, location, currency, date) |
+| Mart | mart_job_market_benchmarks | — | role × market salary comparison |
+| Mart | mart_salary_trends | — | salary movement over time |
+| Mart | mart_skill_demand | — | skill frequency by role and market |
+
+
+---
+
+## DAG (Dependency Order)
+jsearch.job_search_raw          jsearch.salary_raw
+│                               │
+stg_jsearch_job_search          stg_jsearch_salary
+│                               │
+├───────────────────────────────┤
+│                               │
+int_jobs_enriched          int_salary_estimates
+int_job_titles_normalized          │
+│                            │
+├────────────────────────────┤
+│                            │
+dim_job_title ◄── job_title_family_map (seed)
+dim_location
+dim_company ──► int_company_duplicates
+dim_date
+│
+├────────────────────────────┐
+│                            │
+fct_job_postings            fct_salary_estimates
+fct_job_posting_skills
+│                            │
+└────────────────────────────┘
+│
+mart_job_market_benchmarks
+mart_salary_trends
+mart_skill_demand
+
+
+---
+
+## Macros
+
+### `normalize_job_title(column_name)`
+
+Normalizes a raw job title string through 17 sequential passes.
+Called in `int_jobs_enriched`, `int_job_titles_normalized`, and
+`int_salary_estimates` to ensure title normalization is identical
+across all models — a requirement for the `job_title_key` FK to
+be conformed.
+
+**Pass sequence:**
+
+| Pass | Operation | Example |
 |---|---|---|
-| `dim_company` | company + country | Aggregated employer profile: job volume, salary stats, top skill percentages |
+| 1 | Replace punctuation with spaces | `architect/engineer` → `architect engineer` |
+| 2 | Split fused compound words | `architectengineer` → `architect engineer` |
+| 3 | Strip roman numeral suffixes | `Engineer III` → `Engineer` |
+| 4 | Strip seniority suffix abbreviations | `Data Engineer Ssr` → `Data Engineer` |
+| 5 | Strip trailing numeric req IDs (4+ digits) | `Programmer 61096` → `Programmer` |
+| 6 | Strip trailing alphanumeric req IDs | `Architect Is002` → `Architect` |
+| 7 | Strip trailing country/region codes | `Engineer Uk` → `Engineer` |
+| 8 | Strip contract/work type noise | `Engineer Remote Contract` → `Engineer` |
+| 9 | Strip clearance/compliance noise | `Engineer Public Trust` → `Engineer` |
+| 10 | Strip trailing qualification descriptions | `Engineer Strong Sql...` → `Engineer` |
+| 11 | Strip trailing org/function descriptors | `Head Of Engineering Productivity` → `Head Of Engineering` |
+| 12 | Strip known product/platform names | `Lead Engineer Epic Bridges` → `Lead Engineer` |
+| 13 | Strip location noise patterns | `Engineer Job At X In Y` → `Engineer` |
+| 14 | Strip dash-suffix noise | `Engineer - Metamask` → `Engineer` |
+| 15 | Expand seniority abbreviations | `sr` → `senior` |
+| 16 | Expand role abbreviations | `swe` → `software engineer` |
+| 17 | Collapse multiple spaces | — |
 
-### Fact Tables
+**Key design decision:** Pass 1 replaces punctuation with spaces
+rather than stripping it. This prevents adjacent words from fusing
+when punctuation is removed — `architect/engineer` becomes
+`architect engineer` not `architectengineer`.
 
-| Table | Grain | Description |
-|---|---|---|
-| `fct_job_postings` | one row per job | Central fact table with FK to `dim_company` and 50+ skill flags |
-| `fct_skill_demand` | date + skill + seniority + country | Daily skill mention counts and share of postings, for trend charts |
-| `fct_salary_trends` | month + seniority + country | Monthly salary aggregates (avg, median, quartiles) from job postings |
 
-## Ingestion Schedules
+### `derive_seniority_level(column_name)`
 
-| Schedule | Endpoint | Queries |
-|---|---|---|
-| Daily | `job_search` | 8 queries: data/software/ML engineer + analyst roles in Nairobi, remote Africa, UK, US |
-| Weekly | `salary_estimate` | 6 benchmarks: key roles in Nairobi, London, New York |
+Derives a seniority label from a normalized title string using
+keyword matching.
 
-JSearch free tier: **200 req/month**. 8 daily queries = ~240/month — trim or skip weekends to stay within budget.
+| Output | Keywords matched |
+|---|---|
+| Intern | intern, graduate, trainee |
+| Junior | junior, associate, level i |
+| Mid | (no seniority keyword present) |
+| Senior | senior |
+| Lead | lead |
+| Staff | staff |
+| Principal | principal |
+| Director+ | director, head of, vp, vice president |
+| C-Suite | chief, cto, cdo |
 
-## Setup
+### `derive_seniority_rank(column_name)`
 
-Copy `profiles.yml.example` to `~/.dbt/profiles.yml` and set the following in `.env`:
-
-```
-JSEARCH_API_KEY=
-JSEARCH_RAW_ZONE_ROOT=/Volumes/job_market/raw/jsearch
-DATABRICKS_HOST=
-DATABRICKS_HTTP_PATH=
-DATABRICKS_TOKEN=
-```
-
-Create the Unity Catalog Volume before first run:
-```sql
-CREATE SCHEMA IF NOT EXISTS job_market.raw;
-CREATE VOLUME IF NOT EXISTS job_market.raw.jsearch;
-```
-
-Run ingestion:
-```bash
-uv run --env-file .env python scripts/ingestion/ingest_jobs.py daily
-uv run --env-file .env python scripts/ingestion/ingest_jobs.py weekly
-```
-
-Run dbt:
-```bash
-dbt build
-```
+Returns an integer rank (1–9) corresponding to the seniority level.
+Used for correct ordering in BI tools — prevents alphabetic sort
+placing Junior before Senior.

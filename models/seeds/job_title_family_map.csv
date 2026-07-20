@@ -1,0 +1,32 @@
+title_normalized,role_family,role_subfamily,is_technical,is_management
+Data Engineer,Data & Analytics,Engineering,true,false
+Senior Data Engineer,Data & Analytics,Engineering,true,false
+Lead Data Engineer,Data & Analytics,Engineering,true,true
+Staff Data Engineer,Data & Analytics,Engineering,true,false
+Principal Data Engineer,Data & Analytics,Engineering,true,false
+Analytics Engineer,Data & Analytics,Engineering,true,false
+Senior Analytics Engineer,Data & Analytics,Engineering,true,false
+Data Analyst,Data & Analytics,Analysis,true,false
+Senior Data Analyst,Data & Analytics,Analysis,true,false
+Business Intelligence Engineer,Data & Analytics,Analysis,true,false
+BI Developer,Data & Analytics,Analysis,true,false
+Data Scientist,Data & Analytics,Science,true,false
+Senior Data Scientist,Data & Analytics,Science,true,false
+Machine Learning Engineer,AI/ML,Engineering,true,false
+Senior Machine Learning Engineer,AI/ML,Engineering,true,false
+ML Engineer,AI/ML,Engineering,true,false
+AI Engineer,AI/ML,Engineering,true,false
+Software Engineer,Software Engineering,Backend,true,false
+Senior Software Engineer,Software Engineering,Backend,true,false
+Staff Software Engineer,Software Engineering,Backend,true,false
+Frontend Engineer,Software Engineering,Frontend,true,false
+Full Stack Engineer,Software Engineering,Full Stack,true,false
+DevOps Engineer,Infrastructure,DevOps,true,false
+Platform Engineer,Infrastructure,Platform,true,false
+Site Reliability Engineer,Infrastructure,SRE,true,false
+Data Engineering Manager,Data & Analytics,Engineering,true,true
+Head of Data,Data & Analytics,Leadership,true,true
+VP of Data,Data & Analytics,Leadership,true,true
+Chief Data Officer,Data & Analytics,Leadership,true,true
+Product Manager,Product,Management,false,false
+Project Manager,Operations,Management,false,true

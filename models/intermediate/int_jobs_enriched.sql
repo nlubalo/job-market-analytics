@@ -1,10 +1,87 @@
+-- models/intermediate/int_jobs_enriched.sql
+-- =============================================================
+-- Intermediate: enriched and deduplicated job postings
+-- Grain: one row per unique job posting (by job_id_source)
+--
+-- Responsibilities:
+--   1. Normalize company name
+--   2. Normalize and classify location
+--   3. Normalize and classify job title / seniority
+--   4. Derive work arrangement (remote / hybrid / onsite)
+--   5. Flag skills from description text
+--   6. Normalize and annualize salary where disclosed
+--   7. Assign salary bucket
+--   8. Deduplicate across scrape runs (keep latest)
+--   9. Assign unknown member keys for nulls
+--  10. Set data quality flags
+-- =============================================================
+
 {{
     config(
         materialized = 'incremental',
-        unique_key   = 'job_id',
+        unique_key   = ['job_id'],
         incremental_strategy = 'merge',
     )
 }}
+
+
+{% set skills = {
+    "python": ["python"],
+    "r": ["r", "r language"],
+    "sql": ["sql"],
+    "bigquery": ["bigquery", "big query"],
+    "javascript": ["javascript", "java script"],
+    "postgres": ["postgres", "postgresql"],
+    "csharp": ["c#", "c sharp"],
+    "machine_learning": ["machine learning", "ml"],
+    "artificial_intelligence": ["artificial intelligence", "ai"],
+    "spark": ["spark", "apache spark", "pyspark", "spark sql"],
+    "databricks": ["databricks"],
+    "snowflake": ["snowflake"],
+    "redshift": ["redshift"],
+    "mongodb": ["mongodb", "mongo db"],
+    "redis": ["redis"],
+    "elasticsearch": ["elasticsearch", "elastic search"],
+    "delta_lake": ["delta lake"],
+    "iceberg": ["iceberg"],
+    "kafka": ["kafka"],
+    "airflow": ["airflow"],
+    "dagster": ["dagster"],
+    "prefect": ["prefect"],
+    "flink": ["flink"],
+    "nifi": ["nifi"],
+    "dbt": ["dbt"],
+    "aws": ["aws", "amazon web services"],
+    "azure": ["azure", "microsoft azure"],
+    "gcp": ["gcp", "google cloud platform"],
+    "docker": ["docker"],
+    "kubernetes": ["kubernetes", "k8s"],
+    "terraform": ["terraform"],
+    "deep_learning": ["deep learning", "dl"],
+    "mlflow": ["mlflow"],
+    "pytorch": ["pytorch"],
+    "tensorflow": ["tensorflow"],
+    "scikit_learn": ["scikit learn", "sklearn"],
+    "langchain": ["langchain"],
+    "llm": ["llm", "large language model"],
+    "generative_ai": ["generative ai", "generative artificial intelligence"],
+    "great_expectations": ["great expectations"],
+    "soda": ["soda"],
+    "monte_carlo": ["monte carlo"],
+    "data_lineage": ["data lineage"],
+    "data_governance": ["data governance"],
+    "powerbi": ["power bi", "powerbi"],
+    "tableau": ["tableau"],
+    "looker": ["looker"],
+    "metabase": ["metabase"],
+    "superset": ["superset"],
+    "excel": ["excel"],
+    "git": ["git"],
+    "cicd": ["ci/cd", "continuous integration", "continuous delivery"],
+    "jenkins": ["jenkins"],
+    "github_actions": ["github actions"],
+    "agile": ["agile"]
+} %}
 
 -- Adds skill flags, salary bucket, seniority, and remote detection to staging jobs.
 -- This is where domain logic lives before the star schema.
@@ -14,117 +91,253 @@ with jobs as (
     {% if is_incremental() %}
     where _ingested_at > (select max(_ingested_at) from {{ this }})
     {% endif %}
+),
+
+company_normalized as (
+    select
+        *,
+        {{ employer_name_normalization('company_name') }} as company_name_clean,
+        case
+            when
+                company_name is null then '-1'
+                else md5({{ employer_name_normalization('company_name') }})
+        end as company_key
+    from jobs
+),
+
+-- =============================================================
+-- STEP 2: Location normalization
+-- =============================================================
+location_nomalized as (
+    select
+        *,
+        case
+            when job_is_remote = true then 'remote'
+            when lower(description) like any ('%hybrid%', '%flexible working%') then 'hybrid'
+            when lower(description) like any ('%onsite%', '%on-site%', '%in person%', '%in-office%') then 'onsite'
+            else 'onsite'
+        end as work_arrangement,
+        initcap(trim(city))                                 as city_clean,
+        initcap(trim(state))                               as state_clean,
+        initcap(trim(country))                              as country_clean,
+
+        case
+            when city is null and country is null       then '-1'
+            else md5(
+                concat(
+                    coalesce(lower(trim(city)), ''),
+                    '||',
+                    coalesce(lower(trim(country)), '')
+                )
+            )
+        end                                                     as location_key,
+
+        case
+            when job_is_remote = true then 'remote'
+            when city is not null and country is not null then 'located'
+            when city is null and country is null then 'missing'
+            else 'partial'
+        end as location_quality
+    from company_normalized
+
+),
+-- =============================================================
+-- STEP 3: Title normalization and seniority derivation
+-- =============================================================
+
+title_normalized as (
+    select
+        *,
+        {{ normalize_job_title('title') }} as title_normalized,
+        {{ derive_seniority_level('title') }} as seniority_level,
+        {{ derive_seniority_rank('title') }} as seniority_rank
+    from location_nomalized
+),
+skill_flagged as (
+    select
+        *,
+    {% for skill, terms in skills.items() %}
+        {{ skill_flag('description', terms) }} as skill_{{ skill }},
+    {% endfor %}
+
+    {{ skill_count('description', skills) }} as skill_count,
+    case
+            when title_normalized is null
+            then cast(-1 as bigint)
+            else cast(
+                conv(
+                    substr(md5(title_normalized), 1, 8),
+                    16, 10
+                ) as bigint
+            )
+        end                                                     as job_title_key
+from title_normalized
+
+),
+salary_normalized as (
+    select
+        *,
+        case upper(trim(salary_period))
+            when 'YEARLY' then  salary_min
+            when 'MONTHLY' then salary_min * 12
+            when 'WEEKLY' then salary_min * 52
+            when 'DAILY' then salary_min * 260
+            when 'HOURLY' then salary_min * 2080
+            else null
+        end as salary_min_annualized,
+        case upper(trim(salary_period))
+            when 'YEARLY' then  salary_max
+            when 'MONTHLY' then salary_max * 12
+            when 'WEEKLY' then salary_max * 52
+            when 'DAILY' then salary_max * 260
+            when 'HOURLY' then salary_max * 2080
+            else null
+        end as salary_max_annualized,
+        salary_min is not null
+            and salary_max is not null                      as has_salary_disclosed
+    from skill_flagged
+),
+
+-- =============================================================
+-- STEP 7: Deduplication
+-- =============================================================
+
+deduped as (
+    select
+        *,
+
+        row_number() over (
+            partition by job_id
+            order by _ingested_at desc
+        )                                                       as _row_num,
+
+        min(_ingested_at) over (
+            partition by job_id
+        )                                                       as first_seen_at,
+
+        max(_ingested_at) over (
+            partition by job_id
+        )                                                       as last_seen_at
+
+    from salary_normalized
 )
 
 select
-    job_id,
-    title,
-    company_name,
-    location_name,
-    country_code,
-    contract_type,
-    job_is_remote,
 
-    -- seniority derived from title keywords
-    case
-        when lower(title) like any ('%senior%', '%sr.%', '%lead%', '%principal%', '%staff%') then 'senior'
-        when lower(title) like any ('%junior%', '%jr.%', '%graduate%', '%entry%')           then 'junior'
-        when lower(title) like '%intern%'                                                    then 'intern'
-        when lower(title) like any ('%head of%', '%director%', '%vp %', '%chief%')          then 'leadership'
-        else 'mid'
-    end as seniority_band,
+        -- ---------------------------------------------------------
+        -- Identifiers and keys
+        -- ---------------------------------------------------------
+        job_id,
+        company_key,
+        location_key,
+        job_title_key,
+        cast(date_format(
+            to_date(posted_timestamp), 'yyyyMMdd'
+        ) as int)                                               as date_posted_key,
 
-    -- remote detection: use JSearch boolean first, fall back to text scan
-    case
-        when job_is_remote = true then 'remote'
-        when lower(title || ' ' || coalesce(description, '')) like any (
-            '%hybrid%', '%flexible working%'
-        ) then 'hybrid'
-        else 'onsite'
-    end as work_arrangement,
+        cast(date_format(
+            to_date(first_seen_at), 'yyyyMMdd'
+        ) as int)                                               as date_first_seen_key,
 
-    -- languages & frameworks
-    {{ skill_flag('description', 'python') }}               as skill_python,
-    {{ skill_flag_bounded('description', 'sql') }}          as skill_sql,
-    {{ skill_flag('description', 'java') }}                 as skill_java,
-    {{ skill_flag('description', 'scala') }}                as skill_scala,
-    {{ skill_flag_bounded('description', 'go') }}           as skill_go,
-    {{ skill_flag('description', 'rust') }}                 as skill_rust,
-    {{ skill_flag('description', 'javascript') }}           as skill_javascript,
-    {{ skill_flag('description', 'typescript') }}           as skill_typescript,
-    {{ skill_flag_bounded('description', 'c\\+\\+') }}     as skill_cpp,
-    {{ skill_flag_bounded('description', 'r') }}            as skill_r,
+        -- ---------------------------------------------------------
+        -- Descriptive attributes
+        -- ---------------------------------------------------------
+        title,
+        title_normalized,
+        company_name_clean,
+        company_website,
+        company_logo,
+        city_clean,
+        state_clean,
+        country_clean,
+        work_arrangement,
+        seniority_level,
+        seniority_rank,
 
-    -- data processing & storage
-    {{ skill_flag('description', 'spark') }}                as skill_spark,
-    {{ skill_flag('description', 'databricks') }}           as skill_databricks,
-    {{ skill_flag('description', 'snowflake') }}            as skill_snowflake,
-    {{ skill_flag('description', 'bigquery') }}             as skill_bigquery,
-    {{ skill_flag('description', 'redshift') }}             as skill_redshift,
-    {{ skill_flag('description', 'postgresql') }}           as skill_postgresql,
-    {{ skill_flag('description', 'mongodb') }}              as skill_mongodb,
-    {{ skill_flag('description', 'redis') }}                as skill_redis,
-    {{ skill_flag('description', 'elasticsearch') }}        as skill_elasticsearch,
-    {{ skill_flag('description', 'delta lake') }}           as skill_delta_lake,
-    {{ skill_flag('description', 'iceberg') }}              as skill_iceberg,
+         case upper(trim(contract_type))
+            when 'FULLTIME'   then 'Full-Time'
+            when 'PARTTIME'   then 'Part-Time'
+            when 'CONTRACTOR' then 'Contract'
+            when 'INTERN'     then 'Internship'
+            else coalesce(initcap(trim(contract_type)), 'Unknown')
+        end                                                     as employment_type,
 
-    -- orchestration & streaming
-    {{ skill_flag('description', 'kafka') }}                as skill_kafka,
-    {{ skill_flag('description', 'airflow') }}              as skill_airflow,
-    {{ skill_flag('description', 'dagster') }}              as skill_dagster,
-    {{ skill_flag('description', 'prefect') }}              as skill_prefect,
-    {{ skill_flag('description', 'flink') }}                as skill_flink,
-    {{ skill_flag('description', 'nifi') }}                 as skill_nifi,
-    {{ skill_flag('description', 'dbt') }}                  as skill_dbt,
+        -- ---------------------------------------------------------
+        -- Salary measures
+        -- ---------------------------------------------------------
+        has_salary_disclosed,
+        salary_min_annualized,
+        salary_max_annualized,
+        round(
+            (coalesce(salary_min_annualized, 0) + coalesce(salary_max_annualized, 0)) / 2,
+            0
+        )                                                       as salary_midpoint_annual,
 
-    -- cloud & infrastructure
-    {{ skill_flag('description', 'aws') }}                  as skill_aws,
-    {{ skill_flag('description', 'azure') }}                as skill_azure,
-    {{ skill_flag('description', 'gcp') }}                  as skill_gcp,
-    {{ skill_flag('description', 'docker') }}               as skill_docker,
-    {{ skill_flag('description', 'kubernetes') }}           as skill_kubernetes,
-    {{ skill_flag('description', 'terraform') }}            as skill_terraform,
+        -- ---------------------------------------------------------
+        -- Skill flags
+        -- ---------------------------------------------------------
+        skill_python,
+        skill_sql,
+        skill_spark,
+        skill_dbt,
+        skill_airflow,
+        skill_kafka,
+        skill_databricks,
+        skill_bigquery,
+        skill_aws,
+        skill_azure,
+        skill_gcp,
+        skill_snowflake,
+        --skill_ml,
+        skill_deep_learning,
+        skill_llm,
+        skill_count,
 
-    -- ml & ai
-    {{ skill_flag('description', 'machine learning') }}     as skill_machine_learning,
-    {{ skill_flag('description', 'deep learning') }}        as skill_deep_learning,
-    {{ skill_flag('description', 'mlflow') }}               as skill_mlflow,
-    {{ skill_flag('description', 'pytorch') }}              as skill_pytorch,
-    {{ skill_flag('description', 'tensorflow') }}           as skill_tensorflow,
-    {{ skill_flag('description', 'scikit') }}               as skill_scikit_learn,
-    {{ skill_flag('description', 'langchain') }}            as skill_langchain,
-    {{ skill_flag_bounded('description', 'llm') }}          as skill_llm,
-    {{ skill_flag('description', 'generative ai') }}        as skill_generative_ai,
+        -- ---------------------------------------------------------
+        -- Measures
+        -- ---------------------------------------------------------
+        datediff(
+            to_date(last_seen_at),
+            to_date(first_seen_at)
+        )                                                       as days_active,
 
-    -- data quality & governance
-    {{ skill_flag('description', 'great expectations') }}   as skill_great_expectations,
-    {{ skill_flag('description', 'soda') }}                 as skill_soda,
-    {{ skill_flag('description', 'monte carlo') }}          as skill_monte_carlo,
-    {{ skill_flag('description', 'data lineage') }}         as skill_data_lineage,
-    {{ skill_flag('description', 'data governance') }}      as skill_data_governance,
+        1                                                       as posting_count,
 
-    -- bi & analytics
-    {{ skill_flag('description', 'power bi') }}             as skill_powerbi,
-    {{ skill_flag('description', 'tableau') }}              as skill_tableau,
-    {{ skill_flag('description', 'looker') }}               as skill_looker,
-    {{ skill_flag('description', 'metabase') }}             as skill_metabase,
-    {{ skill_flag('description', 'superset') }}             as skill_superset,
-    {{ skill_flag('description', 'excel') }}                as skill_excel,
+        -- ---------------------------------------------------------
+        -- Data quality flags
+        -- ---------------------------------------------------------
+        location_quality,
 
-    -- devops & methodology
-    {{ skill_flag_bounded('description', 'git') }}          as skill_git,
-    {{ skill_flag('description', 'ci/cd') }}                as skill_cicd,
-    {{ skill_flag('description', 'jenkins') }}              as skill_jenkins,
-    {{ skill_flag('description', 'github actions') }}       as skill_github_actions,
-    {{ skill_flag('description', 'agile') }}                as skill_agile,
+        case
+            when job_title_key = -1                             then true
+            else false
+        end                                                     as is_title_unknown,
 
-    salary_min,
-    salary_max,
-    salary_midpoint,
-    {{ salary_bucket('salary_midpoint') }}          as salary_bucket,
+        case
+            when company_key = '-1'                             then true
+            else false
+        end                                                     as is_company_unknown,
 
-    posted_date,
-    posted_timestamp,
-    _ingested_at
+        case
+            when location_quality = 'located'
+             and job_title_key != -1
+             and company_key != '-1'                            then 'high'
+            when location_quality in ('remote', 'partial')
+             and job_title_key != -1                            then 'medium'
+            else                                                     'low'
+        end                                                     as record_quality,
 
-from jobs
+        -- ---------------------------------------------------------
+        -- Pipeline metadata
+        -- ---------------------------------------------------------
+        first_seen_at,
+        last_seen_at,
+        _ingested_at                                             as last_ingested_at
+
+    from deduped
+    where _row_num = 1
+
+
+
+
+
