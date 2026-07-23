@@ -16,7 +16,12 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from openai import OpenAI, RateLimitError, APIStatusError, APIConnectionError
 from openai.types.responses import ResponseInputParam, EasyInputMessageParam
 from scripts.config import _get_secret
-from scripts.ingestion.ingest_jobs import list_raw_partitions, read_raw_zone_text, ensure_raw_zone_dir
+from scripts.ingestion.ingest_jobs import (
+    list_raw_partitions,
+    read_raw_zone_text,
+    write_raw_zone_text,
+    ensure_raw_zone_dir,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("enrich")
@@ -305,16 +310,34 @@ def enrich_job_sync(client: OpenAI, job: dict, retries: int = 3) -> EnrichmentRe
 
 def run_sync(client: OpenAI, jobs: list, output: Path | str, max_workers: int) -> None:
     # FIX: client is now a parameter instead of a module-level global
-    output = Path(output)
-    ensure_raw_zone_dir(str(output.parent))
-    with output.open("a") as f, ThreadPoolExecutor(max_workers=max_workers) as pool:
+    output_path = str(output)
+    ensure_raw_zone_dir(str(Path(output_path).parent))
+
+    # Unity Catalog Volumes don't support append-mode file I/O — open("a")
+    # implicitly seeks to EOF, which raises OSError: [Errno 29] Illegal seek
+    # on the Volumes FUSE mount. So results are buffered in memory and the
+    # whole file is rewritten (never appended to) on each periodic flush.
+    try:
+        existing_lines = read_raw_zone_text(output_path).splitlines()
+    except FileNotFoundError:
+        existing_lines = []
+
+    def _flush(new_lines: list[str]) -> None:
+        all_lines = existing_lines + new_lines
+        if all_lines:
+            write_raw_zone_text(output_path, "\n".join(all_lines) + "\n")
+
+    new_lines: list[str] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(enrich_job_sync, client, j): j for j in jobs}
         for i, fut in enumerate(as_completed(futures), 1):
             rec = fut.result()
-            f.write(json.dumps(asdict(rec)) + "\n")
+            new_lines.append(json.dumps(asdict(rec)))
             if i % 25 == 0:
-                f.flush()
+                _flush(new_lines)
                 log.info("enriched %d/%d", i, len(jobs))
+
+    _flush(new_lines)
 
 
 def main() -> None:

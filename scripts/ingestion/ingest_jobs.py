@@ -314,9 +314,9 @@ def fetch_endpoint_data(
     return all_records, run
 
 
-def _write_text(path: str, content: str) -> None:
+def write_raw_zone_text(path: str, content: str) -> None:
     """
-    Write text to a path.
+    Write text to a path — always a full overwrite, never an append.
 
     On Unity Catalog Volume paths (/Volumes/...), use dbutils.fs when
     running inside a Databricks cluster (dbutils is injected there).
@@ -346,7 +346,7 @@ def _write_text(path: str, content: str) -> None:
 
 def read_raw_zone_text(path: str) -> str:
     """
-    Read text from a raw-zone path — the counterpart to _write_text().
+    Read text from a raw-zone path — the counterpart to write_raw_zone_text().
 
     Unity Catalog Volumes are FUSE-mounted at /Volumes/... on Databricks
     compute, so a plain filesystem read works there (and for genuinely
@@ -456,8 +456,8 @@ def write_raw_zone(
         data_content = json.dumps(payload)
 
     data_path = f"{partition_dir}/data.json"
-    _write_text(data_path, data_content)
-    _write_text(f"{partition_dir}/_run_metadata.json", json.dumps(run.to_dict(), indent=2))
+    write_raw_zone_text(data_path, data_content)
+    write_raw_zone_text(f"{partition_dir}/_run_metadata.json", json.dumps(run.to_dict(), indent=2))
 
     logger.info(
         "Wrote endpoint=%s query=%s → %s (status=%s, records=%d)",
