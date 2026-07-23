@@ -315,7 +315,15 @@ def fetch_endpoint_data(
 
 
 def _write_text(path: str, content: str) -> None:
-    """Write text to a path, using dbutils.fs on Databricks Volumes."""
+    """
+    Write text to a path.
+
+    On Unity Catalog Volume paths (/Volumes/...), use dbutils.fs when
+    running inside a Databricks cluster (dbutils is injected there).
+    Outside Databricks — e.g. an external orchestrator — dbutils doesn't
+    exist, so fall back to the Databricks Files API via databricks-sdk,
+    authenticating with DATABRICKS_HOST / DATABRICKS_TOKEN.
+    """
     if path.startswith("/Volumes/"):
         try:
             from pyspark.dbutils import DBUtils  # type: ignore[import]
@@ -323,10 +331,75 @@ def _write_text(path: str, content: str) -> None:
             dbutils = DBUtils(SparkSession.builder.getOrCreate())
             dbutils.fs.put(path, content, overwrite=True)
             return
-        except Exception:
-            pass
+        except ImportError:
+            pass  # not running on Databricks — fall through to SDK upload
+
+        import io
+        from databricks.sdk import WorkspaceClient
+        WorkspaceClient().files.upload(
+            path, io.BytesIO(content.encode("utf-8")), overwrite=True
+        )
+        return
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(content)
+
+
+def read_raw_zone_text(path: str) -> str:
+    """
+    Read text from a raw-zone path — the counterpart to _write_text().
+
+    Unity Catalog Volumes are FUSE-mounted at /Volumes/... on Databricks
+    compute, so a plain filesystem read works there (and for genuinely
+    local raw_zone_root values, e.g. in tests). Outside Databricks that
+    mount doesn't exist, so fall back to the Databricks Files API.
+    """
+    local = Path(path)
+    if local.exists():
+        return local.read_text()
+    if not path.startswith("/Volumes/"):
+        raise FileNotFoundError(path)
+
+    from databricks.sdk import WorkspaceClient
+    resp = WorkspaceClient().files.download(path)
+    return resp.contents.read().decode("utf-8")
+
+
+def list_raw_partitions(
+    raw_zone_root: str, endpoint: str, ingestion_date: str | None = None
+) -> list[str]:
+    """
+    List data.json paths under {raw_zone_root}/endpoint={endpoint}/ingestion_date=*/query=*/,
+    optionally filtered to one ingestion_date (YYYY-MM-DD; default sweeps all dates).
+
+    Same local-vs-Volume split as read_raw_zone_text(): a plain glob when the
+    endpoint directory is visible on the filesystem (local root, or a Volume
+    FUSE-mounted on Databricks compute), the Databricks Files API otherwise.
+    """
+    endpoint_root = f"{raw_zone_root.rstrip('/')}/endpoint={endpoint}"
+    local = Path(endpoint_root)
+    if local.exists():
+        pattern = f"ingestion_date={ingestion_date or '*'}/query=*/data.json"
+        return [str(p) for p in sorted(local.glob(pattern))]
+
+    if not raw_zone_root.startswith("/Volumes/"):
+        return []
+
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient()
+    paths: list[str] = []
+    for date_entry in w.files.list_directory_contents(endpoint_root):
+        if not date_entry.is_directory:
+            continue
+        date_name = date_entry.path.rstrip("/").rsplit("/", 1)[-1]
+        if ingestion_date and date_name != f"ingestion_date={ingestion_date}":
+            continue
+        for query_entry in w.files.list_directory_contents(date_entry.path):
+            if not query_entry.is_directory:
+                continue
+            for file_entry in w.files.list_directory_contents(query_entry.path):
+                if file_entry.name == "data.json":
+                    paths.append(file_entry.path)
+    return sorted(paths)
 
 
 def write_raw_zone(
