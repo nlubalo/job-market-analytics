@@ -306,6 +306,7 @@ def enrich_job_sync(client: OpenAI, job: dict, retries: int = 3) -> EnrichmentRe
 def run_sync(client: OpenAI, jobs: list, output: Path | str, max_workers: int) -> None:
     # FIX: client is now a parameter instead of a module-level global
     output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("a") as f, ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(enrich_job_sync, client, j): j for j in jobs}
         for i, fut in enumerate(as_completed(futures), 1):
