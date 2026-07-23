@@ -364,6 +364,33 @@ def read_raw_zone_text(path: str) -> str:
     return resp.contents.read().decode("utf-8")
 
 
+def ensure_raw_zone_dir(path: str) -> None:
+    """
+    Create a directory (and any missing parents), including on Unity
+    Catalog Volumes.
+
+    Volumes are FUSE-mounted for read/write on Databricks compute, but the
+    mount does not support plain os.mkdir for new directories — it raises
+    OSError: [Errno 95] Operation not supported. Use dbutils.fs.mkdirs
+    inside Databricks, or the Files API outside it. Local paths use
+    Path.mkdir, which supports this fine.
+    """
+    if not path.startswith("/Volumes/"):
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return
+    try:
+        from pyspark.dbutils import DBUtils  # type: ignore[import]
+        from pyspark.sql import SparkSession
+        dbutils = DBUtils(SparkSession.builder.getOrCreate())
+        dbutils.fs.mkdirs(path)
+        return
+    except ImportError:
+        pass  # not running on Databricks — fall through to SDK
+
+    from databricks.sdk import WorkspaceClient
+    WorkspaceClient().files.create_directory(path)
+
+
 def list_raw_partitions(
     raw_zone_root: str, endpoint: str, ingestion_date: str | None = None
 ) -> list[str]:

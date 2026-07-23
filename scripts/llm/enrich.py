@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from openai import OpenAI, RateLimitError, APIStatusError, APIConnectionError
 from openai.types.responses import ResponseInputParam, EasyInputMessageParam
 from scripts.config import _get_secret
-from scripts.ingestion.ingest_jobs import list_raw_partitions, read_raw_zone_text
+from scripts.ingestion.ingest_jobs import list_raw_partitions, read_raw_zone_text, ensure_raw_zone_dir
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("enrich")
@@ -306,7 +306,7 @@ def enrich_job_sync(client: OpenAI, job: dict, retries: int = 3) -> EnrichmentRe
 def run_sync(client: OpenAI, jobs: list, output: Path | str, max_workers: int) -> None:
     # FIX: client is now a parameter instead of a module-level global
     output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
+    ensure_raw_zone_dir(str(output.parent))
     with output.open("a") as f, ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(enrich_job_sync, client, j): j for j in jobs}
         for i, fut in enumerate(as_completed(futures), 1):
