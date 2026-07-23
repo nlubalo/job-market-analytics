@@ -21,7 +21,7 @@ from scripts.ingestion.ingest_jobs import list_raw_partitions, read_raw_zone_tex
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("enrich")
 
-MODEL = "gpt-5.5-mini"
+MODEL = "gpt-5.4-mini"
 PROMPT_VERSION = "v1"
 MAX_TOKENS = 1024
 MAX_DESCRIPTION = 8000
@@ -283,10 +283,22 @@ def enrich_job_sync(client: OpenAI, job: dict, retries: int = 3) -> EnrichmentRe
                 job["content_hash"],
                 resp.output_text,
             )
-        except (RateLimitError, APIStatusError, APIConnectionError) as e:
+        except APIStatusError as e:
+            # 4xx (bad model, bad request, auth, etc.) is a config/request
+            # error — it will fail identically on every retry, so don't
+            # burn the retry budget on it. Only RateLimitError (429) and
+            # 5xx are worth retrying. Mirrors _fetch()'s split in ingest_jobs.py.
+            if e.status_code and 400 <= e.status_code < 500 and not isinstance(e, RateLimitError):
+                log.error("job %s non-retryable error (%s): %s", job["job_id"], type(e).__name__, e)
+                return failed_record(job["job_id"], job["content_hash"], f"{type(e).__name__}: {e}")
             last_error = f"{type(e).__name__}: {e}"
             wait = 2 ** attempt * 5
-            log.warning("job %s attempt %d failed (%s), retrying in %ds", job["job_id"], attempt + 1, type(e).__name__, wait)
+            log.warning("job %s attempt %d failed (%s): %s — retrying in %ds", job["job_id"], attempt + 1, type(e).__name__, e, wait)
+            time.sleep(wait)
+        except APIConnectionError as e:
+            last_error = f"{type(e).__name__}: {e}"
+            wait = 2 ** attempt * 5
+            log.warning("job %s attempt %d failed (%s): %s — retrying in %ds", job["job_id"], attempt + 1, type(e).__name__, e, wait)
             time.sleep(wait)
     return failed_record(job["job_id"], job["content_hash"], last_error)
 
