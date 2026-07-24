@@ -1,0 +1,9 @@
+# Runtime deps for scripts/ingestion/ingest_jobs.py and scripts/llm/enrich.py.
+# No pyspark/dbt here — this runs off Databricks; the raw-zone helpers fall
+# back to the Databricks SDK for Volume access from outside a cluster.
+requests>=2.31.0
+tenacity>=9.1.4
+python-dotenv>=1.0.0
+databricks-sdk>=0.35.0
+openai>=2.46.0
+pydantic>=2.9.0

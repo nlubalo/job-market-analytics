@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal, get_args
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -198,18 +198,30 @@ def _now() -> str:
 # DEDUP: only call the API for hashes we haven't enriched under this model+prompt version.
 
 def load_seen_hashes(existing_output: Path | str) -> set:
-    existing_output = Path(existing_output)
+    # Volume-aware: Path(existing_output).exists() is always False for
+    # /Volumes/... paths when not running on Databricks compute, which
+    # silently made this always report "nothing enriched yet" off-cluster.
     seen = set()
-    if existing_output.exists():
-        with existing_output.open() as f:
-            for line in f:
-                try:
-                    rec = json.loads(line)
-                    if rec.get("model_version") == MODEL and rec.get("prompt_version") == PROMPT_VERSION:
-                        seen.add(rec["content_hash"])  # FIX: was rec["content_has"]
-                except (json.JSONDecodeError, KeyError):
-                    continue
+    try:
+        content = read_raw_zone_text(str(existing_output))
+    except FileNotFoundError:
+        return seen
+    for line in content.splitlines():
+        try:
+            rec = json.loads(line)
+            if rec.get("model_version") == MODEL and rec.get("prompt_version") == PROMPT_VERSION:
+                seen.add(rec["content_hash"])
+        except (json.JSONDecodeError, KeyError):
+            continue
     return seen
+
+
+def _query_segment(path: str) -> str:
+    """Pull the query=<value> segment back out of a raw-zone partition path."""
+    for part in path.split("/"):
+        if part.startswith("query="):
+            return part[len("query="):]
+    return "unknown"
 
 
 def load_jsearch_raw(raw_root: str, ingestion_date: str | None = None) -> list[dict]:
@@ -220,13 +232,17 @@ def load_jsearch_raw(raw_root: str, ingestion_date: str | None = None) -> list[d
     write_raw_zone() in ingest_jobs.py JSONL-encodes job_search payloads despite
     the .json extension, so this reads line-by-line rather than as one JSON blob.
 
-    Dedups by JSearch job_id across partitions; content-hash dedup happens later
-    in pending_jobs().
+    Dedups by JSearch job_id across partitions — first partition file
+    encountered (sorted order) wins and its query is attached to the job, so
+    enrichment output can be written back into the matching query= partition
+    even though the same posting can legitimately appear under more than one
+    query. Content-hash dedup happens later in pending_jobs().
     """
     jobs, seen_ids = [], set()
     paths = list_raw_partitions(raw_root, endpoint="job_search", ingestion_date=ingestion_date)
     log.info("raw sweep: %d partition files under %s", len(paths), raw_root)
     for path in paths:
+        query = _query_segment(path)
         try:
             content = read_raw_zone_text(path)
         except FileNotFoundError:
@@ -246,7 +262,7 @@ def load_jsearch_raw(raw_root: str, ingestion_date: str | None = None) -> list[d
             if not jid or not title or not desc or jid in seen_ids:
                 continue  # postings without a description can't be enriched
             seen_ids.add(jid)
-            jobs.append({"job_id": jid, "title": title, "description": desc})
+            jobs.append({"job_id": jid, "title": title, "description": desc, "query": query})
     log.info("raw sweep: %d unique postings with descriptions", len(jobs))
     return jobs
 
@@ -340,6 +356,69 @@ def run_sync(client: OpenAI, jobs: list, output: Path | str, max_workers: int) -
     _flush(new_lines)
 
 
+def enrichment_output_path(raw_root: str, ingestion_date: str, query: str) -> str:
+    """Mirrors the raw-zone partition layout, nested under raw_root:
+    llm_enrichment/endpoint=job_search/ingestion_date=<date>/query=<query>/enrichment.json
+    `query` should already be the filesystem-safe form list_raw_partitions'
+    paths (and load_jsearch_raw's job["query"]) use."""
+    return (
+        f"{raw_root.rstrip('/')}/llm_enrichment/endpoint=job_search"
+        f"/ingestion_date={ingestion_date}/query={query}/enrichment.json"
+    )
+
+
+def group_by_query(jobs: list[dict]) -> dict[str, list[dict]]:
+    groups: dict[str, list[dict]] = {}
+    for job in jobs:
+        groups.setdefault(job["query"], []).append(job)
+    return groups
+
+
+def run_enrichment_batch(
+    client: OpenAI,
+    raw_root: str,
+    ingestion_date: str | None = None,
+    max_workers: int = 8,
+    limit: int | None = None,
+) -> None:
+    """Sweep raw postings for ingestion_date (or every date, if None), enrich
+    the unseen ones, and write output partitioned the same way as the raw
+    zone — one enrichment.json per query= partition, not one flat file.
+
+    limit caps the total across all query partitions combined (not per
+    partition) — this is the cost-safety knob for manual test runs, so it
+    needs to stay a global cap even though the underlying work is now split
+    per query.
+
+    NOTE on dedup: seen-hash checks are scoped to each (ingestion_date,
+    query) output file. A posting whose content_hash was already enriched
+    under a *different* date's or query's partition won't be detected here,
+    so it can get re-enriched (and re-paid for). Fine for now; fixing it
+    needs a sweep across every ingestion_date=*/query=*/ enrichment.json,
+    not a per-partition check.
+    """
+    output_ingestion_date = ingestion_date or date.today().isoformat()
+    raw_jobs = load_jsearch_raw(raw_root, ingestion_date)
+    by_query = group_by_query(raw_jobs)
+    log.info("%d postings across %d query partitions", len(raw_jobs), len(by_query))
+
+    remaining = limit
+    for query, query_jobs in by_query.items():
+        if remaining is not None and remaining <= 0:
+            break
+        output_path = enrichment_output_path(raw_root, output_ingestion_date, query)
+        seen = load_seen_hashes(output_path)
+        jobs = pending_jobs(query_jobs, seen)
+        if remaining is not None:
+            jobs = jobs[:remaining]
+        log.info("query=%s: %d pending (%d already enriched)", query, len(jobs), len(seen))
+        if not jobs:
+            continue
+        run_sync(client, jobs, output_path, max_workers)
+        if remaining is not None:
+            remaining -= len(jobs)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -351,22 +430,12 @@ def main() -> None:
         "--ingestion-date",
         help="filter to one ingestion_date (YYYY-MM-DD); default sweeps all dates",
     )
-    ap.add_argument("--output", type=Path, required=True, help="JSONL enrichment table (append)")
     ap.add_argument("--max-workers", type=int, default=8)
-    ap.add_argument("--limit", type=int, help="cap pending jobs (useful for testing)")
+    ap.add_argument("--limit", type=int, help="cap total pending postings across all query partitions (useful for testing)")
     args = ap.parse_args()
 
-    seen = load_seen_hashes(args.output)
-    raw_jobs = load_jsearch_raw(args.raw_root, args.ingestion_date)
-    jobs = pending_jobs(raw_jobs, seen)
-    if args.limit:
-        jobs = jobs[: args.limit]
-    log.info("%d unique pending postings (%d hashes already enriched)", len(jobs), len(seen))
-    if not jobs:
-        return
-
-    client = OpenAI(api_key=_get_secret("OPENAI_API_KEY"))  # FIX: created here, not at import time
-    run_sync(client, jobs, args.output, args.max_workers)
+    client = OpenAI(api_key=_get_secret("OPENAI_API_KEY"))
+    run_enrichment_batch(client, args.raw_root, args.ingestion_date, args.max_workers, args.limit)
 
 
 if __name__ == "__main__":

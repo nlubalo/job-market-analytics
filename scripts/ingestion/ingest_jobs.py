@@ -360,7 +360,11 @@ def read_raw_zone_text(path: str) -> str:
         raise FileNotFoundError(path)
 
     from databricks.sdk import WorkspaceClient
-    resp = WorkspaceClient().files.download(path)
+    from databricks.sdk.errors.platform import NotFound
+    try:
+        resp = WorkspaceClient().files.download(path)
+    except NotFound:
+        raise FileNotFoundError(path) from None
     return resp.contents.read().decode("utf-8")
 
 
@@ -392,11 +396,19 @@ def ensure_raw_zone_dir(path: str) -> None:
 
 
 def list_raw_partitions(
-    raw_zone_root: str, endpoint: str, ingestion_date: str | None = None
+    raw_zone_root: str,
+    endpoint: str,
+    ingestion_date: str | None = None,
+    filename: str = "data.json",
 ) -> list[str]:
     """
-    List data.json paths under {raw_zone_root}/endpoint={endpoint}/ingestion_date=*/query=*/,
+    List <filename> paths under {raw_zone_root}/endpoint={endpoint}/ingestion_date=*/query=*/,
     optionally filtered to one ingestion_date (YYYY-MM-DD; default sweeps all dates).
+
+    filename defaults to the raw-zone convention ("data.json", despite being
+    JSONL content — see write_raw_zone_text). Pass a different filename to
+    sweep a same-shaped partition tree elsewhere, e.g. llm_enrichment's
+    enrichment.json files under a different root.
 
     Same local-vs-Volume split as read_raw_zone_text(): a plain glob when the
     endpoint directory is visible on the filesystem (local root, or a Volume
@@ -405,7 +417,7 @@ def list_raw_partitions(
     endpoint_root = f"{raw_zone_root.rstrip('/')}/endpoint={endpoint}"
     local = Path(endpoint_root)
     if local.exists():
-        pattern = f"ingestion_date={ingestion_date or '*'}/query=*/data.json"
+        pattern = f"ingestion_date={ingestion_date or '*'}/query=*/{filename}"
         return [str(p) for p in sorted(local.glob(pattern))]
 
     if not raw_zone_root.startswith("/Volumes/"):
@@ -424,7 +436,7 @@ def list_raw_partitions(
             if not query_entry.is_directory:
                 continue
             for file_entry in w.files.list_directory_contents(query_entry.path):
-                if file_entry.name == "data.json":
+                if file_entry.name == filename:
                     paths.append(file_entry.path)
     return sorted(paths)
 
